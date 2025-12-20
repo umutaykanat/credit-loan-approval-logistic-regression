@@ -1,0 +1,496 @@
+
+---
+title: "Bank Marketing Data Analysis"
+author: "Umut Aykanat"
+output:
+  html_document:
+    css: stil.css
+    toc: true
+    toc_depth: '3'
+    df_print: paged
+  word_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+geometry: a4paper
+lang: tr
+---
+
+# GİRİŞ
+
+Bu proje, Portekiz’de bir bankanın doğrudan pazarlama kampanyaları sırasında toplanan müşteri verilerini analiz etmeyi amaçlamaktadır. Veri seti, müşterilerin demografik özellikleri (yaş, medeni durum, eğitim düzeyi), finansal durumları (bakiye, kredi geçmişi, konut ve kişisel kredi durumu) ve banka ile iletişim bilgilerini içermektedir. 
+
+Projenin temel hedefi, müşterilerin **vadeli mevduat (term deposit)** teklifini kabul edip etmemelerini etkileyen faktörleri incelemektir. Böylece pazarlama kampanyalarının başarısını artırabilecek değişkenler belirlenebilir.
+
+Veri setinde toplam 17 değişken bulunmaktadır. Bunlardan 16’sı açıklayıcı (bağımsız) değişken, biri ise hedef (bağımlı) değişkendir:  
+- **Bağımlı değişken:** `y` – Müşteri vadeli mevduat teklifini kabul etti mi? (“yes” veya “no”)  
+- **Bağımsız değişkenler:** yaş, meslek, eğitim durumu, kredi durumu, iletişim tipi, kampanya süresi vb.
+
+Bu analiz kapsamında;
+- Değişkenlerin yapısı incelenmiş,  
+- Kategorik değişkenler görselleştirilmiş,  
+- Temel özet istatistikler sunulmuş,  
+
+Sonuç olarak proje, pazarlama stratejilerinin daha veriye dayalı ve hedef odaklı hale gelmesine katkı sağlayabilecek içgörüler sunmaktadır.
+
+```{r}
+data <- read.csv("/Users/umutaykanat/Desktop/portfolio/banking data/train.csv", sep = ";", header = TRUE)
+head(data)
+```
+# Veri Seti Hakkında Betimleyici Bilgiler
+```{r}
+str(data)
+```
+
+Verimiz 45211 gözlem ve 17 değişkenden oluşuyor. Değişkenleri tanıyalım:
+**age**: Müşterinin yaşı
+**job**: İş türü
+**marital**: Medeni durumu
+**education**: Eğitim düzeyi
+**default**: Kredi temerrüt durumu
+**balance**: Ortalama yıllık bakiye(€)
+**housing**: Konut kredisi durumu
+**loan**: Kişisel kredi durumu
+**contact**: İletişim Türü
+**day**: Ayın son iletişim günü
+**month**: Son iletişim ayı
+**duration**: Son iletişim süresi
+**campaign**: Kampanya süresince yapılan iletişim sayısı)
+**pdays**: Önceki kampanyadan sonra geçen gün sayısı
+**previous**: Bu kampanyadan önce yapılan iletişim sayısı
+**poutcome**: Önceki pazarlama kampanyasının sonucu
+**y**: Müşteri vadeli mevduata abone oldu mu?
+
+## Veri Tipi Dönüşümü
+Kategorik değişkenleri factor olarak belirleyelim 
+```{r}
+# Tüm karakter tipindeki değişkenleri faktöre çevir
+data[sapply(data, is.character)] <- lapply(data[sapply(data, is.character)], as.factor)
+str(data)
+```
+
+
+## Keşifçi Veri Analizi ve Görselleştirme
+
+Öncelikle hedef değişkenin dağılımına bakalım
+```{r}
+library(ggplot2)
+# Y değişkeninin oranlarını tablo haline getirelim
+y_data <- as.data.frame(table(data$y))
+colnames(y_data) <- c("y", "count")
+# Pasta grafiği
+ggplot(y_data, aes(x = "", y = count, fill = y)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  labs(title = "Müşteri Mevduat Kabul Oranı (y değişkeni)",
+       fill = "Mevduat Durumu") +
+  theme_void() +
+  geom_text(aes(label = paste0(round(count / sum(count) * 100, 1), "%")),
+            position = position_stack(vjust = 0.5),
+            color = "white",
+            size = 5)
+```
+Vadeli mevduata abone olma durumunun tüm müşteriler bazında dağılımı %11.7 evet iken %88.3 hayırdır. Hedef değişkenin dağılımında eşitsizlik olduğu göz önünde bulundurulmalıdır.
+
+Her değişkenin alt kategorilerine ait müşteri mevduat kabul oranlarını inceleyelim. Bu oranlar tekil incelendiğinde anlamlıdır. Örneğin kişinin yalnızca medeni durumuna göre analiz yapılırsa mevduata abone olma durumu %6.1 iken olmama durumu %54.1'dir.
+
+Değişkenlerin kategorilerinin kendi aralarında müşteri mevduat kabul oranlarını inceleyelim:
+```{r}
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(rlang)
+
+cat_vars <- names(data)[sapply(data, is.factor)]
+custom_colors <- c("no" = "#ff6b6b", "yes" = "#1dd1a1")
+
+for (var in cat_vars) {
+  p_data <- data %>%
+    group_by(across(all_of(var)), y) %>%      # kategori ve y'ye göre say
+    summarise(count = n(), .groups = "drop") %>%
+    group_by(across(all_of(var))) %>%         # kategori bazında topla
+    mutate(percent = count / sum(count) * 100) %>%
+    ungroup()
+  
+  # label sütunu (% formatında)
+  p_data <- p_data %>% mutate(label = sprintf("%.1f%%", percent))
+  
+  p <- ggplot(p_data, aes(x = fct_reorder(as.factor(!!sym(var)), percent, .fun = max),
+                          y = percent, fill = y, label = label)) +
+    geom_col(position = position_dodge(width = 0.9), width = 0.7) +
+    geom_text(position = position_dodge(width = 0.9),
+              vjust = -0.25, size = 3.5, color = "black") +
+    coord_flip() +
+    scale_fill_manual(values = custom_colors) +
+    labs(title = paste("Term Deposit Dağılımı -", var),
+         x = var, y = "Yüzde (%)", fill = "Term Deposit") +
+    theme_minimal(base_size = 13) +
+    theme(plot.title = element_text(face = "bold", hjust = 0.5),
+          legend.position = "bottom")
+  
+  print(p)
+}
+
+```
+
+Kayıp gözlem kontrolü:
+```{r}
+sum(is.na(data)) # kayıp gözlem görünmüyor.
+```
+
+Bu aşamada y değişkenini tahmin etmek üzere regresyon modeli kurup tahmin yapacağız
+
+Bağımlı değişkenin dağılımı:
+```{r}
+table(data$y) 
+```
+Bağımlı değişkenimizin alt kategorilerini incelediğimizde ret sayısının kabul sayısından yaklaşık 7.5 kat fazla olduğu görülmektedir. Tahmin modelini eğitirken bu dengesizliğin yaratacağı yanlılığın önüne geçmek adına eğitim kümesine eşit sayıda kabul ve ret içeren gözlemleri dahil etmek gerekmektedir. Bu işlem yalnızca eğitim kümesinde gerçekleştirilecek ve test kümesine müdahale edilmeyecektir.  
+
+Eğitim setine yeterli sayıda kabul ve ret alabilmek adına düzenlemeler yapalım:
+
+```{r}
+library(dplyr)
+dataYes <- data %>% filter(y == "yes")
+dataNo <- data %>% filter(y == "no")
+nrow(dataYes) ; nrow(dataNo)
+
+set.seed(111)
+dataNoIndex <- sample(1:nrow(dataNo), size = 0.8*nrow(dataYes))
+set.seed(111)
+dataYesIndex <- sample(1:nrow(dataYes), size = 0.8*nrow(dataYes))
+
+trainYes <- dataYes[dataYesIndex, ] 
+trainNo <- dataNo[dataNoIndex, ]
+
+# Şimdi rbind kullanarak alt gruplardan ayrı ayrı aldığımız örneklemleri satır bazında birleştirelim. 
+trainset<-rbind(trainYes,trainNo)
+table(trainset$y) # eşit sayıda no ve yes içeren gözlemi train sete dahil etmiş olduk.
+```
+
+Aynı işlemleri test seti için de yapalım
+```{r}
+testYes <- dataYes[-dataYesIndex,]
+testNo <-dataNo[-dataNoIndex,]
+
+testset<-rbind(testYes, testNo) 
+table(testset$y)
+```
+
+GLMNET yöntemi ile ilk modeli kuralım
+```{r}
+library(glmnet)
+model_glm <- glm(y ~. , family = "binomial", data = trainset)
+summary(model_glm)
+```
+Çıktıda modelin anlamlı (p-value < alpha) olduğu görünmektedir. NullDeviance(Boş modelin sapması) = 11730.8 elde edilirken, modele değişkenler eklendiğinde ResidualDeviance(Artıkların sapması) = 6686.7 olarak daha iyi bir model elde edilmiştir. Yani **bağımsız değişkenlerin eklenmesi modeli iyileştirmiştir.** 
+Her bir değişkenin modele katkılarını ve değişkenlerin anlamlı olup olmadıklarını basitçe çıktıdaki * sayısından yorumlayabiliriz.  
+Modele katkısı olmayan veya katkısı az olan değişkenlerin model çıkarılması model karmaşıklığını düşürmek adına fayda sağlayacaktır. İlerleyen aşamalarda bu işlemlere yer verilecektir.  
+Elde edilen model katsayıları hakkında daha detaylı yorumlar yapabilmek adına exp(𝛽) katsayıları elde edilmelidir.
+```{r}
+exp(coef(model_glm)) 
+```
+Bu değerler odds oranıdır. Katsayı 1’in altındaysa azaltıcı, 1’e eşitse etkisi aynı(fark yok), 1’den fazlaysa etkisi fazladır yorumu yapılabilir.
+
+
+Pseudo_r2 değeri:
+```{r}
+library(pscl)   
+pseudo_r2 = pscl::pR2(model_glm)["McFadden"]
+pseudo_r2
+```
+0.40'tan büyük Pseudo_r2 değeri modelin anlamlı tahminler yaptığını işaret eder. Kurduğumuz model anlamlı tahminler yapabilimiştir!
+
+# Hangi değişken modele daha fazla katkı sağlamış?
+Bu yorumu yapabilmek için Resid. Dev kısmındaki değeri en çok hangi değişkenlerin düşürdüğü incelenir.
+
+```{r}
+anova(model_glm)
+```
+
+Değerler incelendiğinde modelin summary’sinde de olduğu gibi anlamlı çıkan değişkenlerin modele katkısının daha yüksek olduğunu görüyoruz. Tüm değişkenler incelendiğinde complexity’ide azaltmak için etkisi az olan değişkenleri modelden çıkarabiliriz. Modelin karmaşıklıktan uzak olması istediğimiz bir şeydir.
+
+# Model Tahminleri
+```{r}
+predict1<-predict(model_glm,testset,type="response")
+head(predict1)
+```
+
+
+```{r}
+library(devtools)
+cm<-InformationValue::confusionMatrix(testset$y, predictedScores = predict1)
+cm
+```
+Sütun isimlerinde yer alan No ve Yes değerleri test setinde yer alan gerçek değerleri, satır isimlerinde yer alan **0** değeri model tahmininde **No** olarak belirlenen tahminleri, **1** değeri ise **Yes** olarak belirlenen tahminleri ifade etmektedir.  
+*confusion matrix* incelendiğinde **model_glm** doğru negatifleri(30238 tahmin) tespit etmekte oldukça başarılı görünüyor. Başka bir deyişle model_glm mevduata abone olmama durumunu doğru tahmin etmekte başarılı ancak mevduata abone olma durumunu doğru tahmin etmekte iyileştirmeler yapılabilir. Bu değerlendirmeleri **accuracy(doğruluk) ve errorrate(hata oranı)** metriklerinde de inceleyelim:
+
+**Accuracy** toplam gözlem sayısısnın doğru atamalara oranlanması ile edle edilen bir metricdir.
+
+```{r}
+accuracy1<-(cm[2,2]+cm[1,1])/sum(cm)
+accuracy1
+```
+**accuracy** metriği doğru tahminlerin tüm tahminlere oranlamasıyla elde edillir. Tahminlerde %84 doğruluk oranı sağlanmış olmasına karşın yanlış negatiflerin çok olması durumu iyileştirilebilir.
+
+Bir de **Error Rate**(hata oranına) bakalım. Hata oranı yanlış atamaların toplam gözlem sayısına oranlanmasıyla elde edilir.
+```{r}
+errorRate1<-(cm[1,2]+cm[2,1])/sum(cm)
+errorRate1
+```
+Hata oranı %15 olarak elde edildi. Yani model1 ile bir tahminde bulunulduğunda %85 doğru %15 yanlış bir sonuç elde edilecektir.
+
+# GLM MODEL İYİLEŞTİRMESİ
+
+## Optimal Cut_off Value
+
+```{r}
+# install.packages("InformationValue")
+library(InformationValue)
+
+optCutoff<-InformationValue::optimalCutoff(testset$y,predictedScores=predict1)
+optCutoff 
+```
+Esik degeri cok kucuk bulunmustur 0.0099 Burda **optCutt_off** point belirlenirken dikkate alınan metric 
+*accurcy* dir. Fakat probleme göre veriye göre bu durum değişiklik gösterebilir. 
+Yani accuracy’ye göre **cutoff_point** belirlememiz bazen yanıltıcı olabilir.
+Testte iyi sonuçlar verirken gerçek hayat probleminde elde edilen cutoff_pointe göre sonuçlar 
+gerçeği yansıtmayabilir. Ve cutoff-point'in belirlenmesi bazen araştırıcıya da bırakılabilir.  
+Şimdi bu optimal cutoff noktasına göre confusion matrixi yeniden oluşturursak;
+```{r}
+cmOpt<-InformationValue::confusionMatrix(testset$y,predictedScores = predict1,
+                                         threshold =optCutoff )
+cmOpt       # threshold değerini optcutoff yaptık.
+```
+```{r}
+accuracyopt<-(cmOpt[2,2]+cmOpt[1,1])/sum(cmOpt)
+accuracyopt; cm; cmOpt
+```
+Bu noktada cutoff_pointe gore atandıgında **positive-positive** oranı artmış fakat **negative-negative** oranı düşmüştür. Accuracy değerinin de düştüğü görülmektedir.
+Bu noktada amaca gore doğru eşik değeri belirlenmelidir. Araştırma bazında hangi metriğin kritik rol aldığına bağlı olarak cutt_off değeri ayarlanabilir. Örneğin doğru-pozitifleri yakalamanın önemli olduğu hastalık teşhisi gibi durumlar olabilir.
+Bu durum test verisi uzerindende inceleme yaparak karar verilebilir.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Daha önce belirtildiği gibi yanlış negatiflerin(Tip I hata) sebebini inceleyelim:
+```{r}
+summary(predict1)
+```
+**model_glm** kullanılarak elde edilen tahminlerin medyan değeri 0.16 gibi düşük bir değer gelmiştir. Default(varsayılan) olarak 0.5 odds oranı ile çalıştığımız için bu sonuç ortaya çıkmış olabilir. Optimal cut_off value belirleyerek bu konuda iyileştirme yapılabilir. İlerleyen aşamalarda bu konuya değinilecektir.
+
+# İKİNCİ MODELİN KURULMASI
+Daha az bağımsız değişkenle daha iyi bir model kurmak pek çok açıdan avantajlı bir durumdur. Daha basit bir model kurmak adına değişken sayısı azaltılabilir. Anlamlı değişkenlerle modeli tekrar kurup daha iyi bir model elde etmeye çalışalım:
+
+
+
+```{r}
+new_train_set <- trainset %>% select(job,marital,education,default,balance,housing,loan,contact,day,month,duration,campaign,pdays,previous,poutcome,y)
+head(new_train_set)
+```
+
+```{r}
+model_glm2 <- glm(y ~.,
+              family = "binomial", data = new_train_set) 
+summary(model_glm2)
+```
+
+```{r}
+pseudo_r2 = pscl::pR2(model_glm)["McFadden"]
+pseudo_r2_2 = pscl::pR2(model_glm2)["McFadden"]
+pseudo_r2 ; pseudo_r2_2
+
+```
+
+```{r}
+predict2 <- predict(model_glm2, testset ,type="response")
+head(predict2)
+```
+
+# Accuracy
+```{r}
+cm2 <- InformationValue::confusionMatrix(testset$y, predictedScores = predict2)
+cm2
+accuracy2  <-(cm2[2,2]+cm2[1,1])/sum(cm2)
+accuracy2
+```
+
+# Recall
+```{r}
+recall2<-(cm2[2,2])/(cm2[1,2]+cm2[2,2])
+recall2
+```
+Recall değeri 0.8043478 bulunmuştur. Modelin pozitif örneklerin %80.43478’ini doğru bir şekilde tespit ettiği anlamına gelir.
+
+# Precision
+Kesinlik (Precision) Positive olarak tahminlediğimiz değerlerin gerçekten kaç adedinin Positive olduğunu göstermektedir.
+
+
+```{r}
+precision2 <- (cm2[2,2])/(cm2[2,1]+cm2[2,2])
+precision2
+```
+Yani model *müşteri vadeli mevduat aboneliği kabul olanları* %13.50794 kesinlikle tahmin edebiliyor şeklinde yorumlanabilir.
+
+# Sensivity
+Sensivity(Duyarlılık) aslında Recall ile aynı förmülüzasyona sahiptir.
+
+```{r}
+sensivity2<-(cm2[2,2])/(cm2[1,2]+cm2[2,2])
+sensivity2
+```
+Positive classları tahmin ederken ne kadar hassaslıkla tahminde bulunuluğunu gösterir. model2’nin confusion matrix’i için bu değeri %80.43478 olarak elde edildi.
+
+# Specifity
+Negative classı ne kadar iyi tahmin edebildiğimizi gösteren bir metriktir. Bu durumda *mevduata abone olmama durumunu* tahmin etmedeki model başarısını gösterecektir.
+```{r}
+specificity2<-(cm2[1,1])/(cm2[2,1]+cm2[1,1])
+specificity2
+```
+Accuracy değeriyle yakın bir değer(0.8473285) elde ettik. Metrikler üzerindeki gözlemlerimiz sonucunda modelimizin **doğru negatifleri bulmada** başarılı bir model olduğunu görebiliyoruz.
+
+# F1 Scoru
+F1’in yüksek olması positive classların tahmininde modelin iyi olduğunu belirten bir ölçüt olarak kullanılabilir. Bizim modelimiz için iyi sonuç vermesini beklemeyiz.
+```{r}
+f1_score2<-2*((precision2*recall2)/(precision2+recall2))
+f1_score2
+```
+Modelin mevduata abone olma durumunu tahmin etme F1 scoru %23 olarak elde edilmistir. Bir kez daha modelin *mevduata abone olmama durumunu* tahmin etmede başarılı olduğunu vurgulayabiliriz.
+
+# ROC CURVE
+Eğrinin altında kalan alan anlamını taşımaktadır. Alan büyüklüğü 0-1 arasındadır ve 1’e yakın değerler tercih edilir. Yani eğri altında kalan alan büyüdükçe model iyileşir.
+```{r}
+#install.packages("pROC")
+library(pROC)
+rocModel2<-roc(testset$y~predict2)
+plot(rocModel2)
+
+```
+
+Yukarıdaki görselde eğri altında kalan alanı gözlemleyebiliriz. Bir de sayısal değer olarak bakalım:
+```{r}
+rocModel2
+```
+Area under the curve(eğri altında kalan alan) %90.5 olarak elde edilmiştir ve gayet iyi bir sonuçtur.
+
+# Sonuç: Elde Edilen Tahmin Denklemi ve Yorumlanması
+
+İlk olarak 1. model(model_glm) veri setine uygun olarak *binomial logistic regresyon* kullanılarak elde edilmiş ve katsayıları yorumlanmıştır. Daha sonrasında 2. model(model_glm_2) elde edilirken complexity’i düşürmek hedeflenerek anlamsız değişkenler modelden çıkartılmış ve confusionmatrix üzerinden metriklerle karşılaştırma yapılıp model yorumlanmıştır. Seçilen model(model_glm_2)’yi iyileştirmek için cut_off value belirlenmesi gibi çeşitli yollara gidilmiş ve uygun adımlar uygulanmıştır.
+
+
+```{r}
+library(dplyr)
+
+data <- data %>%
+  mutate(age_group = cut(
+    age,
+    breaks = c(18, 25, 35, 45, 55, 65, 100),
+    labels = c("18-25", "26-35", "36-45", "46-55", "56-65", "65+"),
+    right = FALSE
+  ))
+
+```
+
+```{r}
+summary_data <- data %>% 
+  group_by(age_group) %>%
+  summarise(yas_bazinda_onay_orani = mean(y=="yes"), 
+            yas_bazinda_ortalama_butce = mean(balance))
+```
+
+```{r}
+library(ggplot2)
+ggplot(summary_data, aes(x = age_group, y = yas_bazinda_onay_orani)) +
+  geom_col() +
+  labs(
+    title = "Yaş Aralıklarına Göre Onay Oranı",
+    x = "Yaş Aralığı",
+    y = "Onay Oranı"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(summary_data, aes(x = age_group, y = yas_bazinda_ortalama_butce)) +
+  geom_col() +
+  labs(
+    title = "Yaş Aralıklarına Göre Ortalama Limit",
+    x = "Yaş Aralığı",
+    y = "Ortalama Bütçe"
+  ) +
+  theme_minimal()
+```
+
+Bu iki grafikten anlaşılacağı üzre ortalama bütçe değişkeni onay oranı üzerinde kesin bir etkiye sahip değildir. Yaş aralığı arttıkça ortalama bütçe artmasına rağmen onay oranları orta yaş gruplarında düşük yüzdelerde seyir etmektedir.
+
+
+## Değişkenler Arasındaki Korelasyon Katsayıları
+```{r}
+str(data)
+
+num_vars = names(data)[sapply(data, is.numeric)]
+
+cor_mat <- cor(data[num_vars])
+
+
+cor_list <- as.data.frame(as.table(cor_mat))
+
+cor_list <- cor_list %>%
+  dplyr::filter(Var1 != Var2) %>%
+  dplyr::distinct() 
+
+cor_sorted <- cor_list %>%
+  dplyr::arrange(desc(Freq))
+
+head(cor_sorted)
+```
+
+
+## Modelin Test Seti Tahminleri
+Bu adımda modelden, modele daha önce göstermediğimiz test seti gözlemlerini tahmin etmesini isteyeceğiz. Model kurulurken modeli eğitmek için eğitim-test seti olarak bölmüştük. Buradaki test set modelin hiç görmediği değerlerden oluşmaktadır. Karıştırılmamalıdır.
+```{r}
+test_data <- read.csv("/Users/umutaykanat/Desktop/portfolio/banking data/test.csv", sep = ";", header = TRUE)
+head(test_data)
+```
+
+
+```{r}
+predict_test <- predict(model_glm,test_data,type="response")
+head(predict_test)
+```
+
+```{r}
+library(devtools)
+cm<-InformationValue::confusionMatrix(test_data$y, predictedScores = predict_test)
+cm
+```
+
+```{r}
+accuracy_test<-(cm[2,2]+cm[1,1])/sum(cm)
+accuracy_test
+```
+
+Test setine ilişkin tahminlerin accuray oranı **%83.7'dir.** Modelin test set üzerinde başarılı tahminler yaptığını söyleyebiliriz.
+
+
+### TEŞEKKÜRLER
+**Umut Aykanat**
